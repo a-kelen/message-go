@@ -1,0 +1,101 @@
+version: '3'
+services:
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: broker
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:29093
+      KAFKA_LISTENERS: PLAINTEXT://broker:29092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_CREATE_TOPICS: "messages:1:1"
+    healthcheck:
+      test: nc -zv broker 29092
+      interval: 10s
+      timeout: 7s
+      retries: 7
+    networks:
+      - main-network
+  db-1:
+    image: cockroachdb/cockroach:latest
+    container_name: db-central
+    ports:
+      - "26258:26257"
+      - "8084:8080"
+    environment:
+      POSTGRES_DB: main
+    command: start --insecure --join=db-1,db-2,db-3
+    volumes:
+      - cockroach-data-1:/cockroach/cockroach-data
+    depends_on:
+      - db-2
+      - db-3
+    networks:
+      - main-network
+  db-2:
+    image: cockroachdb/cockroach:latest
+    container_name: db-2
+    command: start --insecure --join=db-1,db-2,db-3
+    volumes:
+      - cockroach-data-2:/cockroach/cockroach-data
+    networks:
+      - main-network
+  db-3:
+    image: cockroachdb/cockroach:latest
+    container_name: db-3
+    command: start --insecure --join=db-1,db-2,db-3
+    volumes:
+      - cockroach-data-3:/cockroach/cockroach-data
+    networks:
+      - main-network
+  api:
+    container_name: api
+    build: ./api
+    ports:
+      - "8081:8080"
+    environment:
+      BROKER_URL: broker:29092
+      DB_HOST: db-central
+      DB_PORT: 26257
+      APP_PORT: :8080
+      TOPIC_NAME: messages
+    depends_on: 
+      kafka:
+        condition: service_healthy
+      db-1:
+        condition: service_started
+    networks:
+      - main-network
+  bot:
+    container_name: bot
+    build: ./bot
+    ports:
+      - "3000:3000"
+    environment:
+      APP_PORT: 3000
+      REQUEST_URL: http://api:8080/messages
+    depends_on: 
+      - api
+    networks:
+      - main-network
+volumes:
+  cockroach-data-1: 
+  cockroach-data-2: 
+  cockroach-data-3: 
+networks:
+  main-network:
+    name: main-network
+    driver: bridge
